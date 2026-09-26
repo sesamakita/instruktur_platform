@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Instruktur - Zoom KW Lab</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+
+    <!-- Header Instruktur -->
+    <header class="header">
+        <div class="logo-area">
+            <span class="logo-badge">🖥️ COMMAND CENTER</span>
+            <div class="room-info-pill">
+                <span>Ruang:</span>
+                <strong id="displayRoomId" style="color: var(--primary);">KODING-101</strong>
+            </div>
+            <div class="room-info-pill">
+                <span>Peserta:</span>
+                <strong id="studentCountBadge" style="color: var(--success);">0</strong>
+            </div>
+        </div>
+
+        <div class="header-actions">
+            <!-- Tombol Bagikan Link / QR / APK -->
+            <a href="/zoom-kw.apk" download="zoom-kw.apk" class="btn btn-secondary" style="text-decoration: none;" title="Download file APK untuk peserta">
+                <span>🤖</span> Download APK Peserta
+            </a>
+            <button id="btnShareLink" class="btn btn-secondary">
+                <span>🔗</span> Salin Link Peserta
+            </button>
+            <button id="btnShowQR" class="btn btn-secondary">
+                <span>📱</span> QR Code HP
+            </button>
+
+            <!-- Mic Instruktur -->
+            <button id="btnToggleMic" class="btn btn-secondary">
+                <span id="micIcon">🎙️</span>
+                <span id="micLabel">Mic: Mati</span>
+            </button>
+
+            <!-- Mode Fullscreen -->
+            <button id="btnFullscreen" class="btn btn-secondary" title="Layar Penuh">
+                <span>⛶</span> Fullscreen
+            </button>
+        </div>
+    </header>
+
+    <!-- Alert Container -->
+    <div id="alertContainer" class="alert-container"></div>
+
+    <!-- Main Grid: Multi-Screen Peserta -->
+    <main id="studentGrid" class="grid-container">
+        <!-- Empty State jika belum ada peserta -->
+        <div id="emptyState" style="grid-column: 1 / -1; text-align: center; padding: 80px 20px;">
+            <div style="font-size: 50px; margin-bottom: 16px;">📱</div>
+            <h2 style="font-size: 20px; font-weight: 600; margin-bottom: 8px;">Belum Ada Peserta yang Terhubung</h2>
+            <p style="color: var(--text-muted); max-width: 500px; margin: 0 auto 24px; font-size: 14px;">
+                Minta peserta membuka browser Google Chrome di HP mereka dan masuk ke Ruang Kelas ini untuk mulai membagikan layar koding.
+            </p>
+            <div style="display: inline-flex; gap: 12px;">
+                <button class="btn btn-primary" onclick="copyStudentLink()">
+                    📋 Salin Link Untuk Peserta
+                </button>
+                <button class="btn btn-secondary" onclick="toggleQRModal(true)">
+                    📱 Tampilkan QR Code untuk Discan HP
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal Focus / Zoom-In Layar Peserta -->
+    <div id="focusModal" class="modal-backdrop">
+        <div class="modal-header">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span class="live-badge badge-live">
+                    <span class="pulse-dot"></span> FOCUS INSPECTION
+                </span>
+                <h3 id="focusStudentName" style="font-size: 16px; font-weight: 700;">Nama Peserta</h3>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 13px; color: var(--text-muted);">Tekan ESC atau tombol Tutup untuk kembali ke Grid</span>
+                <button id="btnCloseFocus" class="btn btn-secondary" style="padding: 6px 12px;">
+                    ✕ Tutup
+                </button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <video id="focusScreenVideo" class="modal-screen-video" autoplay playsinline></video>
+            <div id="focusPipContainer" class="modal-pip-cam" style="display: none;">
+                <video id="focusCameraVideo" style="width: 100%; height: 100%; object-fit: cover;" autoplay playsinline></video>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal QR Code -->
+    <div id="qrModal" class="modal-backdrop">
+        <div style="background-color: #1e293b; border: 1px solid var(--border-color); border-radius: 16px; padding: 28px; text-align: center; max-width: 380px; margin: auto;">
+            <h3 style="font-size: 18px; margin-bottom: 8px;">Scan dengan Kamera HP</h3>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">
+                Arahkan kamera HP peserta ke kode QR ini untuk langsung masuk ke halaman share screen.
+            </p>
+            <div id="qrcodeWrapper" style="display: inline-block; background: white; padding: 16px; border-radius: 12px; margin-bottom: 16px;"></div>
+            <p id="studentUrlText" style="font-size: 12px; color: var(--primary); word-break: break-all; margin-bottom: 16px;"></p>
+            <button class="btn btn-secondary btn-block" onclick="toggleQRModal(false)">Tutup</button>
+        </div>
+    </div>
+
+    <!-- Script Host -->
+    <script src="js/host.js"></script>
+</body>
+</html>

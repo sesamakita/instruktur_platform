@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Peserta - Zoom KW Lab</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        .step-card {
+            background-color: #131d2e;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background-color: var(--primary);
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 13px;
+            margin-right: 8px;
+        }
+        .stream-preview {
+            width: 100%;
+            height: 180px;
+            background-color: #000;
+            border-radius: 8px;
+            object-fit: cover;
+            margin-top: 10px;
+            display: none;
+        }
+    </style>
+</head>
+<body style="padding: 16px; justify-content: flex-start;">
+
+    <!-- Audio Element to hear Instructor -->
+    <audio id="remoteInstructorAudio" autoplay playsinline></audio>
+
+    <div class="mobile-card" style="margin: 0 auto; width: 100%;">
+        <!-- Header -->
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="logo-badge" style="font-size: 13px;">📱 MODE PESERTA</span>
+                <span id="connectionBadge" class="live-badge badge-warning">Menghubungkan...</span>
+            </div>
+            <div class="room-info-pill" style="font-size: 12px; padding: 4px 10px;">
+                <span id="studentRoomBadge">Room: -</span>
+            </div>
+        </div>
+
+        <!-- 1. Form Registrasi / Join (Tampil jika belum join) -->
+        <div id="joinFormSection">
+            <h2 style="font-size: 18px; font-weight: 700; margin-bottom: 6px;">Masuk ke Kelas Koding</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">
+                Layar HP Anda akan ditampilkan kepada instruktur untuk panduan koding.
+            </p>
+
+            <div class="form-group">
+                <label class="form-label">Nama Anda</label>
+                <input type="text" id="studentNameInput" class="form-input" placeholder="Contoh: Budi Santoso">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Kode Ruang Kelas (Room ID)</label>
+                <input type="text" id="roomIdInput" class="form-input" placeholder="Kode Room">
+            </div>
+
+            <button id="btnConnect" class="btn btn-primary btn-block">
+                Lanjut ke Pengaturan Layar ➜
+            </button>
+        </div>
+
+        <!-- 2. Kontrol Streaming (Tampil setelah join) -->
+        <div id="streamingControlSection" style="display: none;">
+            
+            <!-- Banner Status Live -->
+            <div id="liveBanner" style="display: none; background: rgba(34, 197, 94, 0.1); border: 2px solid var(--success); border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 20px;">
+                <span class="live-badge badge-live" style="font-size: 13px; padding: 4px 12px; margin-bottom: 8px;">
+                    <span class="pulse-dot"></span> LIVE AKTIF: LAYAR TERKIRIM
+                </span>
+                <h3 style="font-size: 16px; margin-top: 6px; color: #4ade80;">Instruktur Sedang Memantau Layar Anda</h3>
+                
+                <div class="instruction-box" style="text-align: left; margin-top: 14px; background: rgba(15, 23, 42, 0.7);">
+                    <strong>💡 Langkah Selanjutnya:</strong><br>
+                    1. Tekan tombol <strong>HOME</strong> di HP Anda sekarang.<br>
+                    2. Buka aplikasi koding Anda (<strong>Acode / Termux / Spck</strong> dll).<br>
+                    3. Koding seperti biasa! Instruktur bisa melihat kodingan dan error Anda dari PC.
+                </div>
+            </div>
+
+            <!-- Langkah 1: Bagikan Layar HP -->
+            <div class="step-card">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <div style="display: flex; align-items: center;">
+                            <span class="step-number">1</span>
+                            <strong style="font-size: 15px;">Bagikan Layar HP</strong>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            Wajib untuk melihat aplikasi koding Anda.
+                        </p>
+                    </div>
+                </div>
+
+                <div style="margin-top: 14px;">
+                    <button id="btnShareScreen" class="btn btn-primary btn-block">
+                        📲 Mulai Bagikan Layar HP
+                    </button>
+                    <button id="btnStopScreen" class="btn btn-danger btn-block" style="display: none;">
+                        ⏹ Hentikan Berbagi Layar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Langkah 2: Kamera Wajah (Opsional) -->
+            <div class="step-card">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <div style="display: flex; align-items: center;">
+                            <span class="step-number">2</span>
+                            <strong style="font-size: 15px;">Kamera Wajah (Selfie)</strong>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            Menampilkan wajah di pojok layar (Picture-in-Picture).
+                        </p>
+                    </div>
+                </div>
+
+                <div style="margin-top: 14px;">
+                    <button id="btnToggleCamera" class="btn btn-secondary btn-block">
+                        📷 Aktifkan Kamera Depan
+                    </button>
+                    <video id="cameraPreview" class="stream-preview" autoplay playsinline muted></video>
+                </div>
+            </div>
+
+            <!-- Langkah 3: Mikrofon Audio (Opsional) -->
+            <div class="step-card">
+                <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <div style="display: flex; align-items: center;">
+                            <span class="step-number">3</span>
+                            <strong style="font-size: 15px;">Mikrofon Suara</strong>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            Bicara untuk bertanya langsung ke instruktur.
+                        </p>
+                    </div>
+                </div>
+
+                <div style="margin-top: 14px;">
+                    <button id="btnToggleMic" class="btn btn-secondary btn-block">
+                        🎙️ Aktifkan Mikrofon
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tombol Keluar -->
+            <div style="margin-top: 24px; text-align: center;">
+                <button id="btnExit" class="btn btn-secondary" style="font-size: 13px; color: var(--danger); border-color: rgba(239, 68, 68, 0.3);">
+                    Keluar dari Ruang Kelas
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script Peserta -->
+    <script src="js/student.js"></script>
+</body>
+</html>

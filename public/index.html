@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoom KW - Lab Koding & Screen Monitor</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body style="align-items: center; justify-content: center; padding: 20px;">
+
+    <div class="mobile-card" style="width: 100%; max-width: 520px; margin: 0;">
+        <div style="text-align: center; margin-bottom: 24px;">
+            <div style="display: inline-block; margin-bottom: 12px;">
+                <span class="logo-badge" style="font-size: 16px; padding: 8px 16px;">⚡ ZOOM KW - CODING LAB</span>
+            </div>
+            <h1 style="font-size: 22px; font-weight: 700; margin-bottom: 8px;">Monitoring Layar HP & Praktek Koding</h1>
+            <p style="color: var(--text-muted); font-size: 14px;">
+                Pantau layar HP peserta secara realtime dari PC Anda saat praktek koding mobile (Termux, Acode, dll).
+            </p>
+        </div>
+
+        <!-- Opsi 1: Instruktur (PC) -->
+        <div style="background-color: #131d2e; border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <span style="font-size: 20px;">💻</span>
+                <h3 style="font-size: 16px; font-weight: 600;">Untuk Anda (Instruktur / PC)</h3>
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+                Buka Dashboard CCTV Multi-Monitor untuk melihat semua layar HP peserta dalam satu layar besar.
+            </p>
+            <div class="form-group">
+                <label class="form-label">Kode Ruang Kelas (Room ID)</label>
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" id="hostRoomInput" class="form-input" value="KODING-101" placeholder="Contoh: KODING-101">
+                    <button id="btnStartHost" class="btn btn-primary" style="white-space: nowrap;">
+                        Buka Dashboard
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Download APK Android Khusus Peserta -->
+        <div style="background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(34, 197, 94, 0.12)); border: 1px solid var(--primary); border-radius: 12px; padding: 18px; margin-bottom: 16px; text-align: center;">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 6px;">
+                <span style="font-size: 22px;">🤖</span>
+                <h3 style="font-size: 16px; font-weight: 700; color: #38bdf8;">Aplikasi Android Peserta (Release APK)</h3>
+            </div>
+            <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 14px;">
+                Diperlukan agar HP peserta dapat membagikan layar secara penuh saat membuka aplikasi koding (Acode, Termux, dll).
+            </p>
+            <a href="/zoom-kw.apk" download="zoom-kw.apk" class="btn btn-primary btn-block" style="text-decoration: none;">
+                📥 Download APK Peserta (zoom-kw.apk)
+            </a>
+        </div>
+
+        <!-- Opsi 2: Peserta (HP) -->
+        <div style="background-color: #131d2e; border: 1px solid var(--border-color); border-radius: 12px; padding: 18px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <span style="font-size: 20px;">📱</span>
+                <h3 style="font-size: 16px; font-weight: 600;">Untuk Peserta (Dari HP)</h3>
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+                Peserta bergabung dan membagikan layar HP mereka saat koding di aplikasi HP.
+            </p>
+            <div class="form-group">
+                <label class="form-label">Nama Peserta</label>
+                <input type="text" id="studentNameInput" class="form-input" placeholder="Masukkan nama Anda">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Kode Ruang Kelas</label>
+                <input type="text" id="studentRoomInput" class="form-input" value="KODING-101" placeholder="Kode Room">
+            </div>
+            <button id="btnJoinStudent" class="btn btn-secondary btn-block" style="border-color: var(--primary); color: var(--primary);">
+                Gabung & Bagikan Layar HP
+            </button>
+        </div>
+
+        <div style="margin-top: 20px; text-align: center; font-size: 12px; color: var(--text-muted);">
+            Proyek Coding Lab Multi-Screen &copy; 2026
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('btnStartHost').addEventListener('click', () => {
+            const roomId = document.getElementById('hostRoomInput').value.trim() || 'KODING-101';
+            window.location.href = `host.html?room=${encodeURIComponent(roomId)}`;
+        });
+
+        document.getElementById('btnJoinStudent').addEventListener('click', () => {
+            const name = document.getElementById('studentNameInput').value.trim();
+            const roomId = document.getElementById('studentRoomInput').value.trim() || 'KODING-101';
+            if (!name) {
+                alert('Silakan masukkan nama Anda terlebih dahulu!');
+                return;
+            }
+            window.location.href = `student.html?room=${encodeURIComponent(roomId)}&name=${encodeURIComponent(name)}`;
+        });
+    </script>
+</body>
+</html>
