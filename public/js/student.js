@@ -115,7 +115,10 @@ socket.on('signal', async ({ senderId, signalData }) => {
 async function sendOffer() {
     if (!pc) return;
     try {
-        const offer = await pc.createOffer();
+        const offer = await pc.createOffer({
+            offerToReceiveAudio: true,
+            offerToReceiveVideo: false
+        });
         await pc.setLocalDescription(offer);
 
         socket.emit('signal', {

@@ -21,14 +21,14 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          add(FloatingMenuPackage())
         }
     )
   }
 
   override fun onCreate() {
     super.onCreate()
+    com.oney.WebRTCModule.WebRTCModuleOptions.getInstance().enableMediaProjectionService = true
     DefaultNewArchitectureEntryPoint.releaseLevel = try {
       ReleaseLevel.valueOf(BuildConfig.REACT_NATIVE_RELEASE_LEVEL.uppercase())
     } catch (e: IllegalArgumentException) {

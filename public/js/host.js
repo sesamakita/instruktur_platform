@@ -151,7 +151,10 @@ socket.on('signal', async ({ senderId, senderName, signalData, streamType }) => 
 
             socket.emit('signal', {
                 targetId: senderId,
-                signalData: answer
+                signalData: {
+                    type: answer.type,
+                    sdp: answer.sdp
+                }
             });
         } else if (signalData.type === 'answer') {
             console.log(`[WebRTC] Received answer from ${senderId}`);
@@ -173,7 +176,13 @@ function createPeerConnection(studentId) {
         if (event.candidate) {
             socket.emit('signal', {
                 targetId: studentId,
-                signalData: { candidate: event.candidate }
+                signalData: {
+                    candidate: {
+                        candidate: event.candidate.candidate,
+                        sdpMid: event.candidate.sdpMid,
+                        sdpMLineIndex: event.candidate.sdpMLineIndex
+                    }
+                }
             });
         }
     };
@@ -394,39 +403,56 @@ window.addEventListener('keydown', (e) => {
 });
 
 // 6. Host Mic Control (Audio Broadcast to all participants)
-document.getElementById('btnToggleMic').addEventListener('click', async () => {
-    if (!isMicOn) {
+async function ensureHostMicStream() {
+    if (!hostAudioStream) {
         try {
             hostAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            isMicOn = true;
+            hostAudioStream.getAudioTracks().forEach(t => {
+                t.enabled = isMicOn;
+            });
+            // Attach to existing students
+            Object.values(students).forEach(studentObj => {
+                if (studentObj.pc && hostAudioStream) {
+                    try {
+                        const track = hostAudioStream.getAudioTracks()[0];
+                        studentObj.pc.addTrack(track, hostAudioStream);
+                    } catch (e) {}
+                }
+            });
+        } catch (err) {
+            console.error('Failed to access microphone:', err);
+            throw err;
+        }
+    }
+    return hostAudioStream;
+}
+
+document.getElementById('btnToggleMic').addEventListener('click', async () => {
+    try {
+        await ensureHostMicStream();
+        isMicOn = !isMicOn;
+
+        if (hostAudioStream) {
+            hostAudioStream.getAudioTracks().forEach(t => {
+                t.enabled = isMicOn;
+            });
+        }
+
+        if (isMicOn) {
             document.getElementById('micIcon').textContent = '🔊';
             document.getElementById('micLabel').textContent = 'Mic: AKTIF';
             document.getElementById('btnToggleMic').classList.remove('btn-secondary');
             document.getElementById('btnToggleMic').classList.add('btn-success');
-
-            // Send host audio track to all connected student peer connections
-            const audioTrack = hostAudioStream.getAudioTracks()[0];
-            Object.values(students).forEach(studentObj => {
-                if (studentObj.pc) {
-                    studentObj.pc.addTrack(audioTrack, hostAudioStream);
-                }
-            });
-            showAlertToast('🎙️ Mikrofon aktif. Suara Anda terdengar oleh semua peserta.', 'info');
-        } catch (err) {
-            console.error('Failed to access microphone:', err);
-            alert('Gagal mengakses mikrofon: ' + err.message);
+            showAlertToast('🎙️ Mikrofon aktif. Suara Anda disiarkan ke semua peserta.', 'info');
+        } else {
+            document.getElementById('micIcon').textContent = '🎙️';
+            document.getElementById('micLabel').textContent = 'Mic: Mati';
+            document.getElementById('btnToggleMic').classList.remove('btn-success');
+            document.getElementById('btnToggleMic').classList.add('btn-secondary');
+            showAlertToast('🔇 Mikrofon dimatikan.', 'info');
         }
-    } else {
-        if (hostAudioStream) {
-            hostAudioStream.getTracks().forEach(t => t.stop());
-            hostAudioStream = null;
-        }
-        isMicOn = false;
-        document.getElementById('micIcon').textContent = '🎙️';
-        document.getElementById('micLabel').textContent = 'Mic: Mati';
-        document.getElementById('btnToggleMic').classList.remove('btn-success');
-        document.getElementById('btnToggleMic').classList.add('btn-secondary');
-        showAlertToast('🔇 Mikrofon dimatikan.', 'info');
+    } catch (err) {
+        alert('Gagal mengakses mikrofon PC: ' + err.message);
     }
 });
 

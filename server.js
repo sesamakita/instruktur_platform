@@ -43,11 +43,12 @@ async function startServer() {
     const httpsServer = https.createServer(httpsOptions, app);
     const httpServer = http.createServer(app);
 
-    // Attach Socket.io to HTTPS server with aggressive ping for mobile tunnel stability
+    // Attach Socket.io with mobile-friendly ping parameters for cellular stability
     const io = socketIo(httpsServer, {
         cors: { origin: '*' },
-        pingInterval: 10000,
-        pingTimeout: 10000
+        pingInterval: 25000,
+        pingTimeout: 60000,
+        allowEIO3: true
     });
 
     // Also attach socket.io to HTTP server if accessed from localhost
@@ -182,8 +183,9 @@ async function startServer() {
                     destinationId = rooms[roomId].hostSocketId;
                 }
             }
+            const sigType = signalData?.type || (signalData?.candidate ? 'ice-candidate' : 'unknown');
             if (destinationId) {
-                console.log(`[Signal Routed] From ${socket.id} (${socket.role}) to ${destinationId}`);
+                console.log(`[Signal Routed] Type: ${sigType} From ${socket.id} (${socket.role}) to ${destinationId}`);
                 io.to(destinationId).emit('signal', {
                     senderId: socket.id,
                     senderName: socket.studentName || 'Instruktur',
@@ -191,7 +193,7 @@ async function startServer() {
                     streamType
                 });
             } else {
-                console.warn(`[Signal Dropped] No destination found for signal from ${socket.id}`);
+                console.warn(`[Signal Dropped] No destination for ${sigType} from ${socket.id}`);
             }
         });
 
@@ -200,7 +202,7 @@ async function startServer() {
         });
 
         socket.on('disconnect', (reason) => {
-            console.log(`[Socket Disconnected] ID: ${socket.id} (${socket.role}) Reason: ${reason}`);
+            console.log(`[Socket Disconnected] ID: ${socket.id} (${socket.role}) Reason: ${reason} at ${new Date().toLocaleTimeString()}`);
             const roomId = socket.roomId;
 
             if (roomId && rooms[roomId]) {
@@ -222,10 +224,10 @@ async function startServer() {
                             });
                         }
 
-                        // 15 seconds grace period for mobile reconnection
+                        // 60 seconds grace period for mobile reconnection
                         student.disconnectTimeout = setTimeout(() => {
                             if (rooms[roomId] && rooms[roomId].students[socket.id] && rooms[roomId].students[socket.id].disconnected) {
-                                console.log(`[Grace Period Expired] Removing student ${studentName} (${socket.id})`);
+                                console.log(`[Grace Period Expired (60s)] Removing student ${studentName} (${socket.id})`);
                                 delete rooms[roomId].students[socket.id];
                                 if (rooms[roomId].hostSocketId) {
                                     io.to(rooms[roomId].hostSocketId).emit('student-disconnected', {
@@ -235,7 +237,7 @@ async function startServer() {
                                     });
                                 }
                             }
-                        }, 15000);
+                        }, 60000);
                     }
                 }
             }

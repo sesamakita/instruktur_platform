@@ -11,7 +11,9 @@ import {
   SafeAreaView,
   ActivityIndicator,
   Platform,
-  PermissionsAndroid
+  PermissionsAndroid,
+  NativeModules,
+  DeviceEventEmitter
 } from 'react-native';
 import io from 'socket.io-client';
 import {
@@ -20,6 +22,8 @@ import {
   RTCSessionDescription,
   mediaDevices
 } from 'react-native-webrtc';
+
+const { FloatingMenuModule } = NativeModules;
 
 const rtcConfig = {
   iceServers: [
@@ -32,7 +36,7 @@ const rtcConfig = {
 };
 
 export default function App() {
-  const [serverUrl, setServerUrl] = useState('https://gem-growth-boring-mardi.trycloudflare.com');
+  const [serverUrl, setServerUrl] = useState('https://salvador-viewing-varied-vector.trycloudflare.com');
   const [roomId, setRoomId] = useState('KODING-101');
   const [studentName, setStudentName] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -49,10 +53,56 @@ export default function App() {
   const lastSocketIdRef = useRef(null);
   const roomIdRef = useRef('KODING-101');
   const studentNameRef = useRef('');
+  const isJoinedRef = useRef(false);
   const isScreenSharingRef = useRef(false);
+  const isMicActiveRef = useRef(false);
+  const isCameraActiveRef = useRef(false);
   const screenStreamRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const micStreamRef = useRef(null);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    isJoinedRef.current = isJoined;
+  }, [isJoined]);
+  useEffect(() => {
+    isMicActiveRef.current = isMicActive;
+  }, [isMicActive]);
+  useEffect(() => {
+    isCameraActiveRef.current = isCameraActive;
+  }, [isCameraActive]);
+
+  // Sync floating menu UI when state changes
+  useEffect(() => {
+    if (isScreenSharing && Platform.OS === 'android' && FloatingMenuModule) {
+      FloatingMenuModule.updateState({
+        isMicActive,
+        isCameraActive
+      });
+    }
+  }, [isMicActive, isCameraActive, isScreenSharing]);
+
+  // Register floating menu action listeners
+  useEffect(() => {
+    const subMic = DeviceEventEmitter.addListener('onFloatingToggleMic', () => {
+      toggleMic();
+    });
+    const subCam = DeviceEventEmitter.addListener('onFloatingToggleCamera', () => {
+      toggleCamera();
+    });
+    const subStop = DeviceEventEmitter.addListener('onFloatingStopShare', () => {
+      stopScreenShare();
+    });
+
+    return () => {
+      subMic.remove();
+      subCam.remove();
+      subStop.remove();
+      if (Platform.OS === 'android' && FloatingMenuModule) {
+        FloatingMenuModule.hideFloatingMenu();
+      }
+    };
+  }, []);
 
   // Initialize socket and signaling
   const handleConnectAndJoin = () => {
@@ -77,8 +127,8 @@ export default function App() {
 
     try {
       const socket = io(serverUrl.trim(), {
-        transports: ['websocket', 'polling'],
-        timeout: 20000,
+        transports: ['websocket'],
+        timeout: 30000,
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
@@ -90,6 +140,7 @@ export default function App() {
       socket.on('connect', () => {
         console.log('[Socket Connected] ID:', socket.id);
         setIsConnected(true);
+        setStatusText('🟢 Terhubung ke server!');
 
         socket.emit('student-join', {
           roomId: roomIdRef.current,
@@ -112,7 +163,11 @@ export default function App() {
           const screenTrack = screenStreamRef.current.getVideoTracks()[0];
           if (screenTrack && screenTrack.readyState === 'live') {
             console.log('[Reconnecting] Re-adding screen track to peer connection');
-            pcRef.current?.addTrack(screenTrack, screenStreamRef.current);
+            try {
+              pcRef.current?.addTrack(screenTrack, screenStreamRef.current);
+            } catch (e) {
+              console.log('addTrack error:', e);
+            }
             sendOffer();
           }
         }
@@ -126,6 +181,7 @@ export default function App() {
         try {
           if (signalData.type === 'answer') {
             await pc.setRemoteDescription(new RTCSessionDescription(signalData));
+            setStatusText('🟢 Layar live terhubung ke monitor PC!');
           } else if (signalData.candidate) {
             await pc.addIceCandidate(new RTCIceCandidate(signalData.candidate));
           }
@@ -144,12 +200,12 @@ export default function App() {
       socket.on('disconnect', (reason) => {
         console.log('[Socket Disconnected] Reason:', reason);
         setIsConnected(false);
-        // DO NOT reset isJoined to false!
-        // We stay in the classroom UI and allow auto-reconnect without disrupting screen share
+        setStatusText('⏳ Koneksi terputus, menyambung kembali otomatis...');
       });
 
       socket.on('connect_error', (err) => {
         console.warn('[Socket Connect Error]', err.message);
+        setStatusText(`⚠️ Gagal terhubung: ${err.message}`);
       });
 
     } catch (err) {
@@ -170,8 +226,8 @@ export default function App() {
     pcRef.current = pc;
 
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current?.emit('signal', {
+      if (event.candidate && socketRef.current?.connected) {
+        socketRef.current.emit('signal', {
           targetId: hostSocketIdRef.current,
           signalData: {
             candidate: {
@@ -202,18 +258,37 @@ export default function App() {
 
     try {
       setStatusText('Menyiapkan penawaran layar WebRTC...');
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false
+      });
       await pc.setLocalDescription(offer);
 
-      socketRef.current?.emit('signal', {
-        targetId: hostSocketIdRef.current,
-        signalData: {
-          type: offer.type,
-          sdp: offer.sdp
+      const emitOffer = (retries = 10) => {
+        if (socketRef.current && socketRef.current.connected) {
+          socketRef.current.emit('signal', {
+            targetId: hostSocketIdRef.current,
+            signalData: {
+              type: offer.type,
+              sdp: offer.sdp
+            }
+          });
+          console.log('[WebRTC Offer Sent]');
+          setStatusText('🟢 Penawaran layar terkirim ke instruktur!');
+          socketRef.current.emit('student-status-update', {
+            hasScreen: true,
+            hasCamera: isCameraActive
+          });
+        } else if (retries > 0) {
+          console.log(`[Offer Pending] Socket reconnecting... Retries left: ${retries}`);
+          setStatusText('Menunggu koneksi server tersambung...');
+          setTimeout(() => emitOffer(retries - 1), 1000);
+        } else {
+          setStatusText('⚠️ Gagal mengirim sinyal layar, silakan coba lagi');
         }
-      });
-      console.log('[WebRTC Offer Sent]');
-      setStatusText('Penawaran layar terkirim ke instruktur...');
+      };
+
+      emitOffer();
     } catch (err) {
       console.error('[Offer Error]', err);
       setStatusText('Gagal menyiapkan penawaran WebRTC');
@@ -243,12 +318,41 @@ export default function App() {
         } catch (e) {}
 
         setStatusText('Menghubungkan stream layar ke PC...');
-        pcRef.current?.addTrack(screenTrack, stream);
-        await sendOffer();
+        try {
+          pcRef.current?.addTrack(screenTrack, stream);
+        } catch (e) {
+          console.log('addTrack warning:', e);
+        }
 
         setIsScreenSharing(true);
         isScreenSharingRef.current = true;
         setStatusText('🟢 Berbagi layar aktif!');
+
+        await sendOffer();
+
+        // Show floating menu overlay for Termux/Acode
+        if (Platform.OS === 'android' && FloatingMenuModule) {
+          try {
+            const canDraw = await FloatingMenuModule.canDrawOverlays();
+            if (canDraw) {
+              FloatingMenuModule.showFloatingMenu({
+                isMicActive: isMicActiveRef.current,
+                isCameraActive: isCameraActiveRef.current
+              });
+            } else {
+              Alert.alert(
+                '💡 Menu Mengambang di atas Termux',
+                'Untuk menampilkan tombol kontrol (Mic, Kamera, Stop) mengambang saat koding di Termux/Acode, aktifkan izin "Tampilkan di atas aplikasi lain".',
+                [
+                  { text: 'Nanti Saja', style: 'cancel' },
+                  { text: 'Aktifkan Izin', onPress: () => FloatingMenuModule.requestOverlayPermission() }
+                ]
+              );
+            }
+          } catch (e) {
+            console.log('Floating overlay error:', e);
+          }
+        }
 
         screenTrack.onended = () => {
           stopScreenShare();
@@ -258,17 +362,13 @@ export default function App() {
             type: 'warning'
           });
         };
-
-        socketRef.current?.emit('student-status-update', {
-          hasScreen: true,
-          hasCamera: isCameraActive
-        });
       }
 
     } catch (err) {
       console.error('[Screen Share Error]', err);
       if (err.message && (err.message.includes('NotAllowedError') || err.message.includes('canceled'))) {
         console.log('User canceled screen share dialog');
+        setStatusText('Berbagi layar dibatalkan');
       } else {
         Alert.alert('Gagal Berbagi Layar', err.message || 'Izin berbagi layar diperlukan.');
       }
@@ -282,6 +382,10 @@ export default function App() {
     }
     setIsScreenSharing(false);
     isScreenSharingRef.current = false;
+
+    if (Platform.OS === 'android' && FloatingMenuModule) {
+      FloatingMenuModule.hideFloatingMenu();
+    }
 
     socketRef.current?.emit('student-status-update', {
       hasScreen: false,
