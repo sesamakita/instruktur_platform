@@ -43,9 +43,11 @@ async function startServer() {
     const httpsServer = https.createServer(httpsOptions, app);
     const httpServer = http.createServer(app);
 
-    // Attach Socket.io to HTTPS server
+    // Attach Socket.io to HTTPS server with aggressive ping for mobile tunnel stability
     const io = socketIo(httpsServer, {
-        cors: { origin: '*' }
+        cors: { origin: '*' },
+        pingInterval: 10000,
+        pingTimeout: 10000
     });
 
     // Also attach socket.io to HTTP server if accessed from localhost
@@ -55,59 +57,88 @@ async function startServer() {
     // rooms: { [roomId]: { hostSocketId, students: { [socketId]: { name, hasScreen, hasCamera } } } }
     const rooms = {};
 
+    app.get('/api/status', (req, res) => {
+        res.json({
+            rooms,
+            totalClients: io.engine.clientsCount
+        });
+    });
+
     io.on('connection', (socket) => {
         console.log(`[Socket Connected] ID: ${socket.id}`);
 
         // --- HOST (INSTRUCTOR) EVENTS ---
         socket.on('register-host', ({ roomId }) => {
-            if (!rooms[roomId]) {
-                rooms[roomId] = { hostSocketId: socket.id, students: {} };
+            const normRoomId = (roomId || 'KODING-101').trim().toUpperCase();
+            if (!rooms[normRoomId]) {
+                rooms[normRoomId] = { hostSocketId: socket.id, students: {} };
             } else {
-                rooms[roomId].hostSocketId = socket.id;
+                rooms[normRoomId].hostSocketId = socket.id;
             }
 
-            socket.join(roomId);
+            socket.join(normRoomId);
             socket.role = 'host';
-            socket.roomId = roomId;
+            socket.roomId = normRoomId;
 
-            console.log(`[Host Registered] Room: ${roomId}, Host ID: ${socket.id}`);
+            console.log(`[Host Registered] Room: ${normRoomId}, Host ID: ${socket.id}`);
             socket.emit('host-registered', {
-                roomId,
+                roomId: normRoomId,
                 localIp,
                 httpsPort: HTTPS_PORT,
-                existingStudents: rooms[roomId].students
+                existingStudents: rooms[normRoomId].students
             });
         });
 
         // --- STUDENT (PARTICIPANT HP) EVENTS ---
-        socket.on('student-join', ({ roomId, studentName }) => {
-            if (!rooms[roomId]) {
-                rooms[roomId] = { hostSocketId: null, students: {} };
+        socket.on('student-join', ({ roomId, studentName, previousSocketId }) => {
+            const normRoomId = (roomId || 'KODING-101').trim().toUpperCase();
+            if (!rooms[normRoomId]) {
+                rooms[normRoomId] = { hostSocketId: null, students: {} };
             }
 
-            rooms[roomId].students[socket.id] = {
+            // If previous socket exists in grace period, clear its timeout and remove old entry
+            if (previousSocketId && rooms[normRoomId].students[previousSocketId]) {
+                if (rooms[normRoomId].students[previousSocketId].disconnectTimeout) {
+                    clearTimeout(rooms[normRoomId].students[previousSocketId].disconnectTimeout);
+                }
+                delete rooms[normRoomId].students[previousSocketId];
+            }
+
+            // Also check if any existing student has the same name and is marked disconnected
+            Object.keys(rooms[normRoomId].students).forEach(sId => {
+                const s = rooms[normRoomId].students[sId];
+                if (s.name === studentName && s.disconnected) {
+                    if (s.disconnectTimeout) clearTimeout(s.disconnectTimeout);
+                    delete rooms[normRoomId].students[sId];
+                }
+            });
+
+            rooms[normRoomId].students[socket.id] = {
                 id: socket.id,
                 name: studentName || 'Peserta Tanpa Nama',
                 hasScreen: false,
                 hasCamera: false,
+                disconnected: false,
                 joinedAt: new Date().toLocaleTimeString()
             };
 
-            socket.join(roomId);
+            socket.join(normRoomId);
             socket.role = 'student';
-            socket.roomId = roomId;
+            socket.roomId = normRoomId;
             socket.studentName = studentName;
 
-            console.log(`[Student Joined] Room: ${roomId}, Student: ${studentName} (${socket.id})`);
+            console.log(`[Student Joined] Room: ${normRoomId}, Student: ${studentName} (${socket.id})`);
 
             socket.emit('student-joined-success', {
                 studentId: socket.id,
-                hostConnected: !!rooms[roomId].hostSocketId
+                hostSocketId: rooms[normRoomId].hostSocketId,
+                hostConnected: !!rooms[normRoomId].hostSocketId
             });
 
-            if (rooms[roomId].hostSocketId) {
-                io.to(rooms[roomId].hostSocketId).emit('student-connected', {
-                    student: rooms[roomId].students[socket.id]
+            if (rooms[normRoomId].hostSocketId) {
+                console.log(`[Notifying Host] Sending student-connected to host ${rooms[normRoomId].hostSocketId}`);
+                io.to(rooms[normRoomId].hostSocketId).emit('student-connected', {
+                    student: rooms[normRoomId].students[socket.id]
                 });
             }
         });
@@ -142,21 +173,34 @@ async function startServer() {
             }
         });
 
+        // WebRTC Signaling Router: Auto-routes to host if targetId is missing
         socket.on('signal', ({ targetId, signalData, streamType }) => {
-            io.to(targetId).emit('signal', {
-                senderId: socket.id,
-                senderName: socket.studentName || 'Instruktur',
-                signalData,
-                streamType
-            });
+            let destinationId = targetId;
+            const roomId = socket.roomId;
+            if (!destinationId && roomId && rooms[roomId]) {
+                if (socket.role === 'student') {
+                    destinationId = rooms[roomId].hostSocketId;
+                }
+            }
+            if (destinationId) {
+                console.log(`[Signal Routed] From ${socket.id} (${socket.role}) to ${destinationId}`);
+                io.to(destinationId).emit('signal', {
+                    senderId: socket.id,
+                    senderName: socket.studentName || 'Instruktur',
+                    signalData,
+                    streamType
+                });
+            } else {
+                console.warn(`[Signal Dropped] No destination found for signal from ${socket.id}`);
+            }
         });
 
         socket.on('host-command', ({ targetStudentId, command }) => {
             io.to(targetStudentId).emit('host-command', { command });
         });
 
-        socket.on('disconnect', () => {
-            console.log(`[Socket Disconnected] ID: ${socket.id} (${socket.role})`);
+        socket.on('disconnect', (reason) => {
+            console.log(`[Socket Disconnected] ID: ${socket.id} (${socket.role}) Reason: ${reason}`);
             const roomId = socket.roomId;
 
             if (roomId && rooms[roomId]) {
@@ -166,15 +210,32 @@ async function startServer() {
                     io.to(roomId).emit('host-disconnected');
                 } else if (socket.role === 'student') {
                     const student = rooms[roomId].students[socket.id];
-                    const studentName = student ? student.name : 'Peserta';
-                    delete rooms[roomId].students[socket.id];
+                    if (student) {
+                        const studentName = student.name || 'Peserta';
+                        student.disconnected = true;
 
-                    if (rooms[roomId].hostSocketId) {
-                        io.to(rooms[roomId].hostSocketId).emit('student-disconnected', {
-                            studentId: socket.id,
-                            studentName,
-                            time: new Date().toLocaleTimeString()
-                        });
+                        // Notify host that student is temporarily reconnecting (keep card alive)
+                        if (rooms[roomId].hostSocketId) {
+                            io.to(rooms[roomId].hostSocketId).emit('student-reconnecting', {
+                                studentId: socket.id,
+                                studentName
+                            });
+                        }
+
+                        // 15 seconds grace period for mobile reconnection
+                        student.disconnectTimeout = setTimeout(() => {
+                            if (rooms[roomId] && rooms[roomId].students[socket.id] && rooms[roomId].students[socket.id].disconnected) {
+                                console.log(`[Grace Period Expired] Removing student ${studentName} (${socket.id})`);
+                                delete rooms[roomId].students[socket.id];
+                                if (rooms[roomId].hostSocketId) {
+                                    io.to(rooms[roomId].hostSocketId).emit('student-disconnected', {
+                                        studentId: socket.id,
+                                        studentName,
+                                        time: new Date().toLocaleTimeString()
+                                    });
+                                }
+                            }
+                        }, 15000);
                     }
                 }
             }

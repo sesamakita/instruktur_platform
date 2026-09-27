@@ -9,7 +9,9 @@ import {
   Alert,
   StatusBar,
   SafeAreaView,
-  ActivityIndicator
+  ActivityIndicator,
+  Platform,
+  PermissionsAndroid
 } from 'react-native';
 import io from 'socket.io-client';
 import {
@@ -22,12 +24,15 @@ import {
 const rtcConfig = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' }
   ]
 };
 
 export default function App() {
-  const [serverUrl, setServerUrl] = useState('http://192.168.30.74:3001');
+  const [serverUrl, setServerUrl] = useState('https://whereas-pending-patients-scholars.trycloudflare.com');
   const [roomId, setRoomId] = useState('KODING-101');
   const [studentName, setStudentName] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -40,6 +45,10 @@ export default function App() {
   const socketRef = useRef(null);
   const pcRef = useRef(null);
   const hostSocketIdRef = useRef(null);
+  const lastSocketIdRef = useRef(null);
+  const roomIdRef = useRef('KODING-101');
+  const studentNameRef = useRef('');
+  const isScreenSharingRef = useRef(false);
   const screenStreamRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const micStreamRef = useRef(null);
@@ -55,16 +64,23 @@ export default function App() {
       return;
     }
 
+    const cleanRoomId = roomId.trim().toUpperCase();
+    const cleanStudentName = studentName.trim();
+    roomIdRef.current = cleanRoomId;
+    studentNameRef.current = cleanStudentName;
+
     if (socketRef.current) {
       socketRef.current.disconnect();
     }
 
     try {
       const socket = io(serverUrl.trim(), {
-        transports: ['websocket', 'polling'],
-        timeout: 10000,
+        transports: ['websocket'],
+        timeout: 20000,
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
         rejectUnauthorized: false
       });
       socketRef.current = socket;
@@ -74,15 +90,30 @@ export default function App() {
         setIsConnected(true);
 
         socket.emit('student-join', {
-          roomId: roomId.trim(),
-          studentName: studentName.trim()
+          roomId: roomIdRef.current,
+          studentName: studentNameRef.current,
+          previousSocketId: lastSocketIdRef.current
         });
+        lastSocketIdRef.current = socket.id;
       });
 
       socket.on('student-joined-success', (data) => {
         console.log('[Joined Room Success]', data);
         setIsJoined(true);
+        if (data.hostSocketId) {
+          hostSocketIdRef.current = data.hostSocketId;
+        }
         initPeerConnection();
+
+        // If screen was already streaming before reconnect, re-add track & re-send offer
+        if (screenStreamRef.current && isScreenSharingRef.current) {
+          const screenTrack = screenStreamRef.current.getVideoTracks()[0];
+          if (screenTrack && screenTrack.readyState === 'live') {
+            console.log('[Reconnecting] Re-adding screen track to peer connection');
+            pcRef.current?.addTrack(screenTrack, screenStreamRef.current);
+            sendOffer();
+          }
+        }
       });
 
       socket.on('signal', async ({ senderId, signalData }) => {
@@ -108,13 +139,15 @@ export default function App() {
         }
       });
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', (reason) => {
+        console.log('[Socket Disconnected] Reason:', reason);
         setIsConnected(false);
-        setIsJoined(false);
+        // DO NOT reset isJoined to false!
+        // We stay in the classroom UI and allow auto-reconnect without disrupting screen share
       });
 
       socket.on('connect_error', (err) => {
-        Alert.alert('Gagal Terhubung', `Tidak dapat menghubungi server: ${err.message}\nPastikan IP dan Port benar.`);
+        console.warn('[Socket Connect Error]', err.message);
       });
 
     } catch (err) {
@@ -124,14 +157,18 @@ export default function App() {
 
   const initPeerConnection = () => {
     if (pcRef.current) {
-      pcRef.current.close();
+      try {
+        pcRef.current.close();
+      } catch (e) {
+        console.log('Close PC error:', e);
+      }
     }
 
     const pc = new RTCPeerConnection(rtcConfig);
     pcRef.current = pc;
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && hostSocketIdRef.current) {
+      if (event.candidate) {
         socketRef.current?.emit('signal', {
           targetId: hostSocketIdRef.current,
           signalData: { candidate: event.candidate }
@@ -165,34 +202,51 @@ export default function App() {
   // Start Screen Sharing via Android MediaProjection
   const startScreenShare = async () => {
     try {
+      if (Platform.OS === 'android' && Platform.Version >= 33) {
+        try {
+          await PermissionsAndroid.request('android.permission.POST_NOTIFICATIONS');
+        } catch (e) {
+          console.log('Notification permission error:', e);
+        }
+      }
+
       // In react-native-webrtc, getDisplayMedia triggers Android system MediaProjection dialog!
       const stream = await mediaDevices.getDisplayMedia();
       screenStreamRef.current = stream;
 
       const screenTrack = stream.getVideoTracks()[0];
-      screenTrack.contentHint = 'detail'; // Optimize for code clarity
+      if (screenTrack) {
+        try {
+          screenTrack.contentHint = 'detail'; // Optimize for code clarity
+        } catch (e) {}
 
-      pcRef.current?.addTrack(screenTrack, stream);
-      await sendOffer();
+        pcRef.current?.addTrack(screenTrack, stream);
+        await sendOffer();
 
-      setIsScreenSharing(true);
+        setIsScreenSharing(true);
+        isScreenSharingRef.current = true;
 
-      screenTrack.onended = () => {
-        stopScreenShare();
-        socketRef.current?.emit('student-alert', {
-          message: 'Layar dihentikan oleh peserta',
-          type: 'warning'
+        screenTrack.onended = () => {
+          stopScreenShare();
+          socketRef.current?.emit('student-alert', {
+            message: 'Layar dihentikan oleh peserta',
+            type: 'warning'
+          });
+        };
+
+        socketRef.current?.emit('student-status-update', {
+          hasScreen: true,
+          hasCamera: isCameraActive
         });
-      };
-
-      socketRef.current?.emit('student-status-update', {
-        hasScreen: true,
-        hasCamera: isCameraActive
-      });
+      }
 
     } catch (err) {
       console.error('[Screen Share Error]', err);
-      Alert.alert('Gagal Berbagi Layar', err.message);
+      if (err.message && (err.message.includes('NotAllowedError') || err.message.includes('canceled'))) {
+        console.log('User canceled screen share dialog');
+      } else {
+        Alert.alert('Gagal Berbagi Layar', err.message || 'Izin berbagi layar diperlukan.');
+      }
     }
   };
 
@@ -202,6 +256,7 @@ export default function App() {
       screenStreamRef.current = null;
     }
     setIsScreenSharing(false);
+    isScreenSharingRef.current = false;
 
     socketRef.current?.emit('student-status-update', {
       hasScreen: false,
@@ -278,7 +333,7 @@ export default function App() {
           <Text style={styles.logoBadge}>⚡ ZOOM KW MOBILE</Text>
           <View style={[styles.badge, isConnected ? styles.badgeSuccess : styles.badgeWarning]}>
             <Text style={styles.badgeText}>
-              {isConnected ? 'Terhubung ke Server' : 'Belum Terhubung'}
+              {isConnected ? '🟢 Terhubung' : (isJoined ? '⏳ Menyambung Kembali...' : '⚪ Belum Terhubung')}
             </Text>
           </View>
         </View>
@@ -396,6 +451,8 @@ export default function App() {
                 stopScreenShare();
                 if (socketRef.current) socketRef.current.disconnect();
                 setIsJoined(false);
+                isJoinedRef.current = false;
+                setIsConnected(false);
               }}
             >
               <Text style={styles.btnExitText}>Keluar dari Kelas</Text>

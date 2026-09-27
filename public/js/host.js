@@ -7,7 +7,10 @@ const socket = io();
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' }
     ]
 };
 
@@ -105,6 +108,15 @@ socket.on('student-alert-received', ({ studentName, message, type, time }) => {
     playAlertBeep(true);
 });
 
+socket.on('student-reconnecting', ({ studentId, studentName }) => {
+    showAlertToast(`⏳ ${studentName} koneksi terputus, menunggu menyambung kembali...`, 'warning');
+    const studentObj = students[studentId];
+    if (studentObj && studentObj.badgeEl) {
+        studentObj.badgeEl.className = 'live-badge badge-warning';
+        studentObj.badgeEl.innerHTML = '<span class="pulse-dot"></span> Reconnecting...';
+    }
+});
+
 socket.on('student-disconnected', ({ studentId, studentName, time }) => {
     showAlertToast(`🔴 [${time}] ${studentName} keluar dari ruang kelas`, 'danger');
     playAlertBeep(true);
@@ -112,11 +124,12 @@ socket.on('student-disconnected', ({ studentId, studentName, time }) => {
 });
 
 // 3. WebRTC Signaling Handling
-socket.on('signal', async ({ senderId, signalData, streamType }) => {
+socket.on('signal', async ({ senderId, senderName, signalData, streamType }) => {
     let studentObj = students[senderId];
     if (!studentObj) {
-        console.warn(`Signal received from unknown student: ${senderId}`);
-        return;
+        console.log(`[WebRTC] Sinyal diterima dari peserta baru, membuat kartu otomatis: ${senderId}`);
+        addStudentCard({ id: senderId, name: senderName || 'Peserta HP' });
+        studentObj = students[senderId];
     }
 
     const pc = studentObj.pc;
@@ -227,6 +240,13 @@ function createPeerConnection(studentId) {
 // 4. UI Card Management
 function addStudentCard(student) {
     if (students[student.id]) return; // Already exists
+
+    // If an existing student has the same name (reconnect case), remove old card cleanly
+    Object.keys(students).forEach(oldId => {
+        if (students[oldId].student && students[oldId].student.name === student.name && oldId !== student.id) {
+            removeStudent(oldId);
+        }
+    });
 
     document.getElementById('emptyState').style.display = 'none';
 
