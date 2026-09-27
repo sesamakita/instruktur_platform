@@ -32,11 +32,12 @@ const rtcConfig = {
 };
 
 export default function App() {
-  const [serverUrl, setServerUrl] = useState('https://whereas-pending-patients-scholars.trycloudflare.com');
+  const [serverUrl, setServerUrl] = useState('https://gem-growth-boring-mardi.trycloudflare.com');
   const [roomId, setRoomId] = useState('KODING-101');
   const [studentName, setStudentName] = useState('');
   const [isConnected, setIsConnected] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
+  const [statusText, setStatusText] = useState('Siap bergabung ke kelas');
 
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -68,6 +69,7 @@ export default function App() {
     const cleanStudentName = studentName.trim();
     roomIdRef.current = cleanRoomId;
     studentNameRef.current = cleanStudentName;
+    setStatusText('Menghubungkan ke server instruktur...');
 
     if (socketRef.current) {
       socketRef.current.disconnect();
@@ -75,7 +77,7 @@ export default function App() {
 
     try {
       const socket = io(serverUrl.trim(), {
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
         timeout: 20000,
         reconnection: true,
         reconnectionAttempts: Infinity,
@@ -171,13 +173,26 @@ export default function App() {
       if (event.candidate) {
         socketRef.current?.emit('signal', {
           targetId: hostSocketIdRef.current,
-          signalData: { candidate: event.candidate }
+          signalData: {
+            candidate: {
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex
+            }
+          }
         });
       }
     };
 
     pc.onconnectionstatechange = () => {
       console.log('[Peer Connection State]:', pc.connectionState);
+      if (pc.connectionState === 'connected') {
+        setStatusText('🟢 Layar live terhubung ke monitor PC!');
+      } else if (pc.connectionState === 'connecting') {
+        setStatusText('Menyambungkan stream video...');
+      } else if (pc.connectionState === 'failed') {
+        setStatusText('Koneksi WebRTC terganggu, mencoba ulang...');
+      }
     };
   };
 
@@ -186,16 +201,22 @@ export default function App() {
     if (!pc) return;
 
     try {
+      setStatusText('Menyiapkan penawaran layar WebRTC...');
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
       socketRef.current?.emit('signal', {
         targetId: hostSocketIdRef.current,
-        signalData: offer
+        signalData: {
+          type: offer.type,
+          sdp: offer.sdp
+        }
       });
       console.log('[WebRTC Offer Sent]');
+      setStatusText('Penawaran layar terkirim ke instruktur...');
     } catch (err) {
       console.error('[Offer Error]', err);
+      setStatusText('Gagal menyiapkan penawaran WebRTC');
     }
   };
 
@@ -210,6 +231,7 @@ export default function App() {
         }
       }
 
+      setStatusText('Meminta izin rekam layar...');
       // In react-native-webrtc, getDisplayMedia triggers Android system MediaProjection dialog!
       const stream = await mediaDevices.getDisplayMedia();
       screenStreamRef.current = stream;
@@ -220,14 +242,17 @@ export default function App() {
           screenTrack.contentHint = 'detail'; // Optimize for code clarity
         } catch (e) {}
 
+        setStatusText('Menghubungkan stream layar ke PC...');
         pcRef.current?.addTrack(screenTrack, stream);
         await sendOffer();
 
         setIsScreenSharing(true);
         isScreenSharingRef.current = true;
+        setStatusText('🟢 Berbagi layar aktif!');
 
         screenTrack.onended = () => {
           stopScreenShare();
+          setStatusText('Layar dihentikan oleh peserta');
           socketRef.current?.emit('student-alert', {
             message: 'Layar dihentikan oleh peserta',
             type: 'warning'
@@ -336,6 +361,11 @@ export default function App() {
               {isConnected ? '🟢 Terhubung' : (isJoined ? '⏳ Menyambung Kembali...' : '⚪ Belum Terhubung')}
             </Text>
           </View>
+        </View>
+
+        {/* Live Status Bar */}
+        <View style={styles.statusBarBox}>
+          <Text style={styles.statusBarText}>ℹ️ {statusText}</Text>
         </View>
 
         {!isJoined ? (
@@ -477,7 +507,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20
+    marginBottom: 12
+  },
+  statusBarBox: {
+    backgroundColor: '#1e293b',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#334155'
+  },
+  statusBarText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '500'
   },
   logoBadge: {
     backgroundColor: '#0284c7',
